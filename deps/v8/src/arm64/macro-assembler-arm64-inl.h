@@ -7,13 +7,13 @@
 
 #include <ctype.h>
 
-#include "src/globals.h"
+#include "src/common/globals.h"
 
 #include "src/arm64/assembler-arm64-inl.h"
 #include "src/arm64/assembler-arm64.h"
 #include "src/arm64/instrument-arm64.h"
 #include "src/base/bits.h"
-#include "src/macro-assembler.h"
+#include "src/codegen/macro-assembler.h"
 
 namespace v8 {
 namespace internal {
@@ -1100,70 +1100,6 @@ void MacroAssembler::JumpIfNotSmi(Register value, Label* not_smi_label) {
   JumpIfSmi(value, nullptr, not_smi_label);
 }
 
-
-void MacroAssembler::JumpIfBothSmi(Register value1,
-                                   Register value2,
-                                   Label* both_smi_label,
-                                   Label* not_smi_label) {
-  STATIC_ASSERT((kSmiTagSize == 1) && (kSmiTag == 0));
-  UseScratchRegisterScope temps(this);
-  Register tmp = temps.AcquireX();
-  // Check if both tag bits are clear.
-  Orr(tmp, value1, value2);
-  JumpIfSmi(tmp, both_smi_label, not_smi_label);
-}
-
-
-void MacroAssembler::JumpIfEitherSmi(Register value1,
-                                     Register value2,
-                                     Label* either_smi_label,
-                                     Label* not_smi_label) {
-  STATIC_ASSERT((kSmiTagSize == 1) && (kSmiTag == 0));
-  UseScratchRegisterScope temps(this);
-  Register tmp = temps.AcquireX();
-  // Check if either tag bit is clear.
-  And(tmp, value1, value2);
-  JumpIfSmi(tmp, either_smi_label, not_smi_label);
-}
-
-
-void MacroAssembler::JumpIfEitherNotSmi(Register value1,
-                                        Register value2,
-                                        Label* not_smi_label) {
-  JumpIfBothSmi(value1, value2, nullptr, not_smi_label);
-}
-
-
-void MacroAssembler::JumpIfBothNotSmi(Register value1,
-                                      Register value2,
-                                      Label* not_smi_label) {
-  JumpIfEitherSmi(value1, value2, nullptr, not_smi_label);
-}
-
-
-void MacroAssembler::ObjectTag(Register tagged_obj, Register obj) {
-  STATIC_ASSERT(kHeapObjectTag == 1);
-  if (emit_debug_code()) {
-    Label ok;
-    Tbz(obj, 0, &ok);
-    Abort(AbortReason::kObjectTagged);
-    Bind(&ok);
-  }
-  Orr(tagged_obj, obj, kHeapObjectTag);
-}
-
-
-void MacroAssembler::ObjectUntag(Register untagged_obj, Register obj) {
-  STATIC_ASSERT(kHeapObjectTag == 1);
-  if (emit_debug_code()) {
-    Label ok;
-    Tbnz(obj, 0, &ok);
-    Abort(AbortReason::kObjectNotTagged);
-    Bind(&ok);
-  }
-  Bic(untagged_obj, obj, kHeapObjectTag);
-}
-
 void TurboAssembler::jmp(Label* L) { B(L); }
 
 void TurboAssembler::Push(Handle<HeapObject> handle) {
@@ -1191,7 +1127,13 @@ void TurboAssembler::Claim(int64_t count, uint64_t unit_size) {
     return;
   }
   DCHECK_EQ(size % 16, 0);
-
+#if V8_OS_WIN
+  while (size > kStackPageSize) {
+    Sub(sp, sp, kStackPageSize);
+    Str(xzr, MemOperand(sp));
+    size -= kStackPageSize;
+  }
+#endif
   Sub(sp, sp, size);
 }
 
@@ -1207,22 +1149,33 @@ void TurboAssembler::Claim(const Register& count, uint64_t unit_size) {
   }
   AssertPositiveOrZero(count);
 
+#if V8_OS_WIN
+  // "Functions that allocate 4k or more worth of stack must ensure that each
+  // page prior to the final page is touched in order." Source:
+  // https://docs.microsoft.com/en-us/cpp/build/arm64-windows-abi-conventions?view=vs-2019#stack
+
+  // Callers expect count register to not be clobbered, so copy it.
+  UseScratchRegisterScope temps(this);
+  Register bytes_scratch = temps.AcquireX();
+  Mov(bytes_scratch, size);
+
+  Label check_offset;
+  Label touch_next_page;
+  B(&check_offset);
+  Bind(&touch_next_page);
+  Sub(sp, sp, kStackPageSize);
+  // Just to touch the page, before we increment further.
+  Str(xzr, MemOperand(sp));
+  Sub(bytes_scratch, bytes_scratch, kStackPageSize);
+
+  Bind(&check_offset);
+  Cmp(bytes_scratch, kStackPageSize);
+  B(gt, &touch_next_page);
+
+  Sub(sp, sp, bytes_scratch);
+#else
   Sub(sp, sp, size);
-}
-
-
-void MacroAssembler::ClaimBySMI(const Register& count_smi, uint64_t unit_size) {
-  DCHECK(unit_size == 0 || base::bits::IsPowerOfTwo(unit_size));
-  const int shift = CountTrailingZeros(unit_size, kXRegSizeInBits) - kSmiShift;
-  const Operand size(count_smi,
-                     (shift >= 0) ? (LSL) : (LSR),
-                     (shift >= 0) ? (shift) : (-shift));
-
-  if (size.IsZero()) {
-    return;
-  }
-
-  Sub(sp, sp, size);
+#endif
 }
 
 void TurboAssembler::Drop(int64_t count, uint64_t unit_size) {
@@ -1279,21 +1232,6 @@ void TurboAssembler::DropSlots(int64_t count) {
 }
 
 void TurboAssembler::PushArgument(const Register& arg) { Push(padreg, arg); }
-
-void MacroAssembler::DropBySMI(const Register& count_smi, uint64_t unit_size) {
-  DCHECK(unit_size == 0 || base::bits::IsPowerOfTwo(unit_size));
-  const int shift = CountTrailingZeros(unit_size, kXRegSizeInBits) - kSmiShift;
-  const Operand size(count_smi,
-                     (shift >= 0) ? (LSL) : (LSR),
-                     (shift >= 0) ? (shift) : (-shift));
-
-  if (size.IsZero()) {
-    return;
-  }
-
-  Add(sp, sp, size);
-}
-
 
 void MacroAssembler::CompareAndBranch(const Register& lhs,
                                       const Operand& rhs,

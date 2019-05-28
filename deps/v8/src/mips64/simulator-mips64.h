@@ -13,16 +13,16 @@
 #define V8_MIPS64_SIMULATOR_MIPS64_H_
 
 // globals.h defines USE_SIMULATOR.
-#include "src/globals.h"
+#include "src/common/globals.h"
 
 #if defined(USE_SIMULATOR)
 // Running with a simulator.
 
-#include "src/allocation.h"
-#include "src/assembler.h"
 #include "src/base/hashmap.h"
+#include "src/codegen/assembler.h"
+#include "src/execution/simulator-base.h"
 #include "src/mips64/constants-mips64.h"
-#include "src/simulator-base.h"
+#include "src/utils/allocation.h"
 
 namespace v8 {
 namespace internal {

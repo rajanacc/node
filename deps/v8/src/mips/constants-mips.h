@@ -4,7 +4,7 @@
 
 #ifndef V8_MIPS_CONSTANTS_MIPS_H_
 #define V8_MIPS_CONSTANTS_MIPS_H_
-#include "src/cpu-features.h"
+#include "src/codegen/cpu-features.h"
 // UNIMPLEMENTED_ macro for MIPS.
 #ifdef DEBUG
 #define UNIMPLEMENTED_MIPS()                                                  \
@@ -290,7 +290,7 @@ class MSARegisters {
 // Instructions encoding constants.
 
 // On MIPS all instructions are 32 bits.
-typedef int32_t Instr;
+using Instr = int32_t;
 
 // Special Software Interrupt codes when used in the presence of the MIPS
 // simulator.

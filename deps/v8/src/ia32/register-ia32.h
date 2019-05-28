@@ -5,8 +5,8 @@
 #ifndef V8_IA32_REGISTER_IA32_H_
 #define V8_IA32_REGISTER_IA32_H_
 
-#include "src/register.h"
-#include "src/reglist.h"
+#include "src/codegen/register.h"
+#include "src/codegen/reglist.h"
 
 namespace v8 {
 namespace internal {
@@ -92,11 +92,11 @@ class XMMRegister : public RegisterBase<XMMRegister, kDoubleAfterLast> {
   explicit constexpr XMMRegister(int code) : RegisterBase(code) {}
 };
 
-typedef XMMRegister FloatRegister;
+using FloatRegister = XMMRegister;
 
-typedef XMMRegister DoubleRegister;
+using DoubleRegister = XMMRegister;
 
-typedef XMMRegister Simd128Register;
+using Simd128Register = XMMRegister;
 
 #define DEFINE_REGISTER(R) \
   constexpr DoubleRegister R = DoubleRegister::from_code<kDoubleCode_##R>();

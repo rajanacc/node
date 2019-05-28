@@ -9,18 +9,18 @@
 
 #include "src/base/bits.h"
 #include "src/base/division-by-constant.h"
-#include "src/bootstrapper.h"
-#include "src/callable.h"
-#include "src/code-factory.h"
-#include "src/counters.h"
+#include "src/codegen/callable.h"
+#include "src/codegen/code-factory.h"
+#include "src/codegen/external-reference-table.h"
+#include "src/codegen/macro-assembler.h"
+#include "src/codegen/register-configuration.h"
 #include "src/debug/debug.h"
-#include "src/external-reference-table.h"
-#include "src/frames-inl.h"
+#include "src/execution/frames-inl.h"
 #include "src/heap/heap-inl.h"  // For MemoryChunk.
-#include "src/macro-assembler.h"
-#include "src/register-configuration.h"
+#include "src/init/bootstrapper.h"
+#include "src/logging/counters.h"
 #include "src/runtime/runtime.h"
-#include "src/snapshot/embedded-data.h"
+#include "src/snapshot/embedded/embedded-data.h"
 #include "src/snapshot/snapshot.h"
 #include "src/wasm/wasm-code-manager.h"
 
@@ -459,6 +459,32 @@ void TurboAssembler::RestoreRegisters(RegList registers) {
   MultiPop(regs);
 }
 
+void TurboAssembler::CallEphemeronKeyBarrier(Register object, Register address,
+                                             SaveFPRegsMode fp_mode) {
+  EphemeronKeyBarrierDescriptor descriptor;
+  RegList registers = descriptor.allocatable_registers();
+
+  SaveRegisters(registers);
+
+  Register object_parameter(
+      descriptor.GetRegisterParameter(EphemeronKeyBarrierDescriptor::kObject));
+  Register slot_parameter(descriptor.GetRegisterParameter(
+      EphemeronKeyBarrierDescriptor::kSlotAddress));
+  Register fp_mode_parameter(
+      descriptor.GetRegisterParameter(EphemeronKeyBarrierDescriptor::kFPMode));
+
+  push(object);
+  push(address);
+
+  pop(slot_parameter);
+  pop(object_parameter);
+
+  Move(fp_mode_parameter, Smi::FromEnum(fp_mode));
+  Call(isolate()->builtins()->builtin_handle(Builtins::kEphemeronKeyBarrier),
+       RelocInfo::CODE_TARGET);
+  RestoreRegisters(registers);
+}
+
 void TurboAssembler::CallRecordWriteStub(
     Register object, Register address,
     RememberedSetAction remembered_set_action, SaveFPRegsMode fp_mode) {
@@ -565,11 +591,6 @@ void MacroAssembler::RecordWrite(Register object, Register address,
 
   bind(&done);
 
-  // Count number of write barriers in generated code.
-  isolate()->counters()->write_barriers_static()->Increment();
-  IncrementCounter(isolate()->counters()->write_barriers_dynamic(), 1, ip,
-                   value);
-
   // Clobber clobbered registers when running with the debug-code flag
   // turned on to provoke errors.
   if (emit_debug_code()) {
@@ -633,27 +654,6 @@ void TurboAssembler::RestoreFrameStateForTailCall() {
   LoadP(r0, MemOperand(fp, StandardFrameConstants::kCallerPCOffset));
   LoadP(fp, MemOperand(fp, StandardFrameConstants::kCallerFPOffset));
   mtlr(r0);
-}
-
-// Push and pop all registers that can hold pointers.
-void MacroAssembler::PushSafepointRegisters() {
-  // Safepoints expect a block of kNumSafepointRegisters values on the
-  // stack, so adjust the stack for unsaved registers.
-  const int num_unsaved = kNumSafepointRegisters - kNumSafepointSavedRegisters;
-  DCHECK_GE(num_unsaved, 0);
-  if (num_unsaved > 0) {
-    subi(sp, sp, Operand(num_unsaved * kPointerSize));
-  }
-  MultiPush(kSafepointSavedRegisters);
-}
-
-
-void MacroAssembler::PopSafepointRegisters() {
-  const int num_unsaved = kNumSafepointRegisters - kNumSafepointSavedRegisters;
-  MultiPop(kSafepointSavedRegisters);
-  if (num_unsaved > 0) {
-    addi(sp, sp, Operand(num_unsaved * kPointerSize));
-  }
 }
 
 int MacroAssembler::SafepointRegisterStackIndex(int reg_code) {
@@ -997,7 +997,6 @@ int TurboAssembler::LeaveFrame(StackFrame::Type type, int stack_adjustment) {
 //
 //  SP -> previousSP
 //        LK reserved
-//        code
 //        sp_on_exit (for debug?)
 // oldSP->prev SP
 //        LK
@@ -1025,7 +1024,7 @@ void MacroAssembler::EnterExitFrame(bool save_doubles, int stack_space,
 
   mov(ip, Operand(StackFrame::TypeToMarker(frame_type)));
   PushCommonFrame(ip);
-  // Reserve room for saved entry sp and code object.
+  // Reserve room for saved entry sp.
   subi(sp, fp, Operand(ExitFrameConstants::kFixedFrameSizeFromFp));
 
   if (emit_debug_code()) {
@@ -1036,8 +1035,6 @@ void MacroAssembler::EnterExitFrame(bool save_doubles, int stack_space,
     StoreP(kConstantPoolRegister,
            MemOperand(fp, ExitFrameConstants::kConstantPoolOffset));
   }
-  Move(r8, CodeObject());
-  StoreP(r8, MemOperand(fp, ExitFrameConstants::kCodeOffset));
 
   // Save the frame pointer and the context in top.
   Move(r8, ExternalReference::Create(IsolateAddressId::kCEntryFPAddress,
@@ -1567,32 +1564,6 @@ void MacroAssembler::JumpIfIsInRange(Register value, unsigned lower_limit,
   ble(on_in_range);
 }
 
-void MacroAssembler::TryDoubleToInt32Exact(Register result,
-                                           DoubleRegister double_input,
-                                           Register scratch,
-                                           DoubleRegister double_scratch) {
-  Label done;
-  DCHECK(double_input != double_scratch);
-
-  ConvertDoubleToInt64(double_input,
-#if !V8_TARGET_ARCH_PPC64
-                       scratch,
-#endif
-                       result, double_scratch);
-
-#if V8_TARGET_ARCH_PPC64
-  TestIfInt32(result, r0);
-#else
-  TestIfInt32(scratch, result, r0);
-#endif
-  bne(&done);
-
-  // convert back and compare
-  fcfid(double_scratch, double_scratch);
-  fcmpu(double_scratch, double_input);
-  bind(&done);
-}
-
 void TurboAssembler::TruncateDoubleToI(Isolate* isolate, Zone* zone,
                                        Register result,
                                        DoubleRegister double_input,
@@ -1717,6 +1688,9 @@ void MacroAssembler::IncrementCounter(StatsCounter* counter, int value,
                                       Register scratch1, Register scratch2) {
   DCHECK_GT(value, 0);
   if (FLAG_native_code_counters && counter->Enabled()) {
+    // This operation has to be exactly 32-bit wide in case the external
+    // reference table redirects the counter to a uint32_t dummy_stats_counter_
+    // field.
     Move(scratch2, ExternalReference::Create(counter));
     lwz(scratch1, MemOperand(scratch2));
     addi(scratch1, scratch1, Operand(value));
@@ -1729,6 +1703,9 @@ void MacroAssembler::DecrementCounter(StatsCounter* counter, int value,
                                       Register scratch1, Register scratch2) {
   DCHECK_GT(value, 0);
   if (FLAG_native_code_counters && counter->Enabled()) {
+    // This operation has to be exactly 32-bit wide in case the external
+    // reference table redirects the counter to a uint32_t dummy_stats_counter_
+    // field.
     Move(scratch2, ExternalReference::Create(counter));
     lwz(scratch1, MemOperand(scratch2));
     subi(scratch1, scratch1, Operand(value));
@@ -1790,22 +1767,6 @@ void TurboAssembler::Abort(AbortReason reason) {
 void MacroAssembler::LoadNativeContextSlot(int index, Register dst) {
   LoadP(dst, NativeContextMemOperand());
   LoadP(dst, ContextMemOperand(dst, index));
-}
-
-
-void MacroAssembler::UntagAndJumpIfSmi(Register dst, Register src,
-                                       Label* smi_case) {
-  STATIC_ASSERT(kSmiTag == 0);
-  TestBitRange(src, kSmiTagSize - 1, 0, r0);
-  SmiUntag(dst, src);
-  beq(smi_case, cr0);
-}
-
-void MacroAssembler::JumpIfEitherSmi(Register reg1, Register reg2,
-                                     Label* on_either_smi) {
-  STATIC_ASSERT(kSmiTag == 0);
-  JumpIfSmi(reg1, on_either_smi);
-  JumpIfSmi(reg2, on_either_smi);
 }
 
 void MacroAssembler::AssertNotSmi(Register object) {
@@ -3029,31 +2990,31 @@ void TurboAssembler::LoadCodeObjectEntry(Register destination,
 
   if (options().isolate_independent_code) {
     DCHECK(root_array_available());
-    Label if_code_is_builtin, out;
+    Label if_code_is_off_heap, out;
 
     Register scratch = r11;
 
     DCHECK(!AreAliased(destination, scratch));
     DCHECK(!AreAliased(code_object, scratch));
 
-    // Check whether the Code object is a builtin. If so, call its (off-heap)
-    // entry point directly without going through the (on-heap) trampoline.
-    // Otherwise, just call the Code object as always.
+    // Check whether the Code object is an off-heap trampoline. If so, call its
+    // (off-heap) entry point directly without going through the (on-heap)
+    // trampoline.  Otherwise, just call the Code object as always.
+    LoadWordArith(scratch, FieldMemOperand(code_object, Code::kFlagsOffset));
+    mov(r0, Operand(Code::IsOffHeapTrampoline::kMask));
+    and_(r0, scratch, r0, SetRC);
+    bne(&if_code_is_off_heap, cr0);
 
-    LoadWordArith(scratch,
-                  FieldMemOperand(code_object, Code::kBuiltinIndexOffset));
-    cmpi(scratch, Operand(Builtins::kNoBuiltinId));
-    bne(&if_code_is_builtin);
-
-    // A non-builtin Code object, the entry point is at
+    // Not an off-heap trampoline, the entry point is at
     // Code::raw_instruction_start().
     addi(destination, code_object, Operand(Code::kHeaderSize - kHeapObjectTag));
     b(&out);
 
-    // A builtin Code object, the entry point is loaded from the builtin entry
+    // An off-heap trampoline, the entry point is loaded from the builtin entry
     // table.
-    // The builtin index is loaded in scratch.
-    bind(&if_code_is_builtin);
+    bind(&if_code_is_off_heap);
+    LoadWordArith(scratch,
+                  FieldMemOperand(code_object, Code::kBuiltinIndexOffset));
     ShiftLeftImm(destination, scratch, Operand(kSystemPointerSizeLog2));
     add(destination, destination, kRootRegister);
     LoadP(destination,

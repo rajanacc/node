@@ -5,8 +5,8 @@
 #ifndef V8_S390_REGISTER_S390_H_
 #define V8_S390_REGISTER_S390_H_
 
-#include "src/register.h"
-#include "src/reglist.h"
+#include "src/codegen/register.h"
+#include "src/codegen/reglist.h"
 
 namespace v8 {
 namespace internal {
@@ -210,10 +210,10 @@ ASSERT_TRIVIALLY_COPYABLE(DoubleRegister);
 static_assert(sizeof(DoubleRegister) == sizeof(int),
               "DoubleRegister can efficiently be passed by value");
 
-typedef DoubleRegister FloatRegister;
+using FloatRegister = DoubleRegister;
 
 // TODO(john.yan) Define SIMD registers.
-typedef DoubleRegister Simd128Register;
+using Simd128Register = DoubleRegister;
 
 #define DEFINE_REGISTER(R) \
   constexpr DoubleRegister R = DoubleRegister::from_code<kDoubleCode_##R>();

@@ -5,9 +5,8 @@
 #if V8_TARGET_ARCH_ARM64
 
 #include "src/arm64/decoder-arm64.h"
-#include "src/globals.h"
-#include "src/utils.h"
-
+#include "src/common/globals.h"
+#include "src/utils/utils.h"
 
 namespace v8 {
 namespace internal {

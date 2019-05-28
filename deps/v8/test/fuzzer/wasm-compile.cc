@@ -9,10 +9,10 @@
 #include <algorithm>
 
 #include "include/v8.h"
-#include "src/isolate.h"
-#include "src/objects-inl.h"
-#include "src/objects.h"
-#include "src/ostreams.h"
+#include "src/execution/isolate.h"
+#include "src/utils/ostreams.h"
+#include "src/objects/objects-inl.h"
+#include "src/objects/objects.h"
 #include "src/wasm/wasm-interpreter.h"
 #include "src/wasm/wasm-module-builder.h"
 #include "src/wasm/wasm-module.h"
@@ -20,8 +20,6 @@
 #include "test/common/wasm/wasm-module-runner.h"
 #include "test/fuzzer/fuzzer-support.h"
 #include "test/fuzzer/wasm-fuzzer-common.h"
-
-typedef uint8_t byte;
 
 namespace v8 {
 namespace internal {
@@ -71,7 +69,7 @@ class DataRange {
     // arbitrary expressions.
     const size_t num_bytes = std::min(max_bytes, data_.size());
     T result = T();
-    memcpy(&result, data_.start(), num_bytes);
+    memcpy(&result, data_.begin(), num_bytes);
     data_ += num_bytes;
     return result;
   }

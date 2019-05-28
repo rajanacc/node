@@ -9,10 +9,10 @@
 #ifndef V8_PPC_MACRO_ASSEMBLER_PPC_H_
 #define V8_PPC_MACRO_ASSEMBLER_PPC_H_
 
-#include "src/bailout-reason.h"
-#include "src/contexts.h"
-#include "src/double.h"
-#include "src/globals.h"
+#include "src/codegen/bailout-reason.h"
+#include "src/common/globals.h"
+#include "src/numbers/double.h"
+#include "src/objects/contexts.h"
 #include "src/ppc/assembler-ppc.h"
 
 namespace v8 {
@@ -68,9 +68,7 @@ Register GetRegisterThatIsNotOneOf(Register reg1, Register reg2 = no_reg,
 
 class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
  public:
-  template <typename... Args>
-  explicit TurboAssembler(Args&&... args)
-      : TurboAssemblerBase(std::forward<Args>(args)...) {}
+  using TurboAssemblerBase::TurboAssemblerBase;
 
   // Converts the integer (untagged smi) in |src| to a double, storing
   // the result to |dst|
@@ -274,6 +272,8 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   void CallRecordWriteStub(Register object, Register address,
                            RememberedSetAction remembered_set_action,
                            SaveFPRegsMode fp_mode, Address wasm_target);
+  void CallEphemeronKeyBarrier(Register object, Register address,
+                               SaveFPRegsMode fp_mode);
 
   void MultiPush(RegList regs, Register location = sp);
   void MultiPop(RegList regs, Register location = sp);
@@ -649,9 +649,7 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
 // MacroAssembler implements a collection of frequently used acros.
 class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
  public:
-  template <typename... Args>
-  explicit MacroAssembler(Args&&... args)
-      : TurboAssembler(std::forward<Args>(args)...) {}
+  using TurboAssembler::TurboAssembler;
 
   // ---------------------------------------------------------------------------
   // GC Support
@@ -675,11 +673,6 @@ class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
       LinkRegisterStatus lr_status, SaveFPRegsMode save_fp,
       RememberedSetAction remembered_set_action = EMIT_REMEMBERED_SET,
       SmiCheck smi_check = INLINE_SMI_CHECK);
-
-  // Push and pop the registers that can hold pointers, as defined by the
-  // RegList constant kSafepointSavedRegisters.
-  void PushSafepointRegisters();
-  void PopSafepointRegisters();
 
   // Enter exit frame.
   // stack_space - extra stack space, used for parameters before call to C.
@@ -819,11 +812,6 @@ class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
   void JumpIfIsInRange(Register value, unsigned lower_limit,
                        unsigned higher_limit, Label* on_in_range);
 
-  // Try to convert a double to a signed 32-bit integer.
-  // CR_EQ in cr7 is set and result assigned if the conversion is exact.
-  void TryDoubleToInt32Exact(Register result, DoubleRegister double_input,
-                             Register scratch, DoubleRegister double_scratch);
-
   // ---------------------------------------------------------------------------
   // Runtime calls
 
@@ -896,17 +884,11 @@ class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
 #endif
   }
 
-  // Untag the source value into destination and jump if source is a smi.
-  // Souce and destination can be the same register.
-  void UntagAndJumpIfSmi(Register dst, Register src, Label* smi_case);
-
   // Jump if either of the registers contain a non-smi.
   inline void JumpIfNotSmi(Register value, Label* not_smi_label) {
     TestIfSmi(value, r0);
     bne(not_smi_label, cr0);
   }
-  // Jump if either of the registers contain a smi.
-  void JumpIfEitherSmi(Register reg1, Register reg2, Label* on_either_smi);
 
   // Abort execution if argument is a smi, enabled via --debug-code.
   void AssertNotSmi(Register object);

@@ -13,19 +13,19 @@
 #define V8_PPC_SIMULATOR_PPC_H_
 
 // globals.h defines USE_SIMULATOR.
-#include "src/globals.h"
+#include "src/common/globals.h"
 
 #if defined(USE_SIMULATOR)
 // Running with a simulator.
 
-#include "src/allocation.h"
 #include "src/base/lazy-instance.h"
 #include "src/base/platform/mutex.h"
+#include "src/utils/allocation.h"
 
-#include "src/assembler.h"
 #include "src/base/hashmap.h"
+#include "src/codegen/assembler.h"
+#include "src/execution/simulator-base.h"
 #include "src/ppc/constants-ppc.h"
-#include "src/simulator-base.h"
 
 namespace v8 {
 namespace internal {
@@ -162,6 +162,9 @@ class Simulator : public SimulatorBase {
   intptr_t get_pc() const;
 
   Address get_sp() const { return static_cast<Address>(get_register(sp)); }
+
+  // Accessor to the internal Link Register
+  intptr_t get_lr() const;
 
   // Accessor to the internal simulator stack area.
   uintptr_t StackLimit(uintptr_t c_limit) const;

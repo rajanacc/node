@@ -9,7 +9,7 @@
 
 #include "src/base/logging.h"
 #include "src/base/macros.h"
-#include "src/globals.h"
+#include "src/common/globals.h"
 
 // UNIMPLEMENTED_ macro for PPC.
 #ifdef DEBUG
@@ -21,7 +21,8 @@
 #endif
 
 #if V8_HOST_ARCH_PPC && \
-    (V8_OS_AIX || (V8_TARGET_ARCH_PPC64 && V8_TARGET_BIG_ENDIAN))
+    (V8_OS_AIX || (V8_TARGET_ARCH_PPC64 && V8_TARGET_BIG_ENDIAN && \
+    (!defined(_CALL_ELF) || _CALL_ELF == 1)))
 #define ABI_USES_FUNCTION_DESCRIPTORS 1
 #else
 #define ABI_USES_FUNCTION_DESCRIPTORS 0
@@ -33,13 +34,15 @@
 #define ABI_PASSES_HANDLES_IN_REGS 0
 #endif
 
-#if !V8_HOST_ARCH_PPC || !V8_TARGET_ARCH_PPC64 || V8_TARGET_LITTLE_ENDIAN
+#if !V8_HOST_ARCH_PPC || !V8_TARGET_ARCH_PPC64 || \
+    V8_TARGET_LITTLE_ENDIAN || (defined(_CALL_ELF) && _CALL_ELF == 2)
 #define ABI_RETURNS_OBJECT_PAIRS_IN_REGS 1
 #else
 #define ABI_RETURNS_OBJECT_PAIRS_IN_REGS 0
 #endif
 
-#if !V8_HOST_ARCH_PPC || (V8_TARGET_ARCH_PPC64 && V8_TARGET_LITTLE_ENDIAN)
+#if !V8_HOST_ARCH_PPC || (V8_TARGET_ARCH_PPC64 && (V8_TARGET_LITTLE_ENDIAN || \
+    (defined(_CALL_ELF) && _CALL_ELF == 2)))
 #define ABI_CALL_VIA_IP 1
 #else
 #define ABI_CALL_VIA_IP 0
@@ -125,7 +128,7 @@ inline Condition NegateCondition(Condition cond) {
 // representing instructions from usual 32 bit values.
 // Instruction objects are pointers to 32bit values, and provide methods to
 // access the various ISA fields.
-typedef uint32_t Instr;
+using Instr = uint32_t;
 
 #define PPC_XX3_OPCODE_LIST(V)                                                 \
   /* VSX Scalar Add Double-Precision */                                        \

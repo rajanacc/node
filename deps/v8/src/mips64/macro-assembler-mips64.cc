@@ -6,22 +6,22 @@
 
 #if V8_TARGET_ARCH_MIPS64
 
-#include "src/assembler-inl.h"
 #include "src/base/bits.h"
 #include "src/base/division-by-constant.h"
-#include "src/bootstrapper.h"
-#include "src/callable.h"
-#include "src/code-factory.h"
-#include "src/counters.h"
+#include "src/codegen/assembler-inl.h"
+#include "src/codegen/callable.h"
+#include "src/codegen/code-factory.h"
+#include "src/codegen/external-reference-table.h"
+#include "src/codegen/macro-assembler.h"
+#include "src/codegen/register-configuration.h"
 #include "src/debug/debug.h"
-#include "src/external-reference-table.h"
-#include "src/frames-inl.h"
+#include "src/execution/frames-inl.h"
 #include "src/heap/heap-inl.h"  // For MemoryChunk.
-#include "src/macro-assembler.h"
+#include "src/init/bootstrapper.h"
+#include "src/logging/counters.h"
 #include "src/objects/heap-number.h"
-#include "src/register-configuration.h"
 #include "src/runtime/runtime.h"
-#include "src/snapshot/embedded-data.h"
+#include "src/snapshot/embedded/embedded-data.h"
 #include "src/snapshot/snapshot.h"
 #include "src/wasm/wasm-code-manager.h"
 
@@ -153,27 +153,6 @@ void TurboAssembler::PushStandardFrame(Register function_reg) {
   Daddu(fp, sp, Operand(offset));
 }
 
-// Push and pop all registers that can hold pointers.
-void MacroAssembler::PushSafepointRegisters() {
-  // Safepoints expect a block of kNumSafepointRegisters values on the
-  // stack, so adjust the stack for unsaved registers.
-  const int num_unsaved = kNumSafepointRegisters - kNumSafepointSavedRegisters;
-  DCHECK_GE(num_unsaved, 0);
-  if (num_unsaved > 0) {
-    Dsubu(sp, sp, Operand(num_unsaved * kPointerSize));
-  }
-  MultiPush(kSafepointSavedRegisters);
-}
-
-
-void MacroAssembler::PopSafepointRegisters() {
-  const int num_unsaved = kNumSafepointRegisters - kNumSafepointSavedRegisters;
-  MultiPop(kSafepointSavedRegisters);
-  if (num_unsaved > 0) {
-    Daddu(sp, sp, Operand(num_unsaved * kPointerSize));
-  }
-}
-
 int MacroAssembler::SafepointRegisterStackIndex(int reg_code) {
   // The registers are pushed starting with the highest encoding,
   // which means that lowest encodings are closest to the stack pointer.
@@ -247,6 +226,32 @@ void TurboAssembler::RestoreRegisters(RegList registers) {
     }
   }
   MultiPop(regs);
+}
+
+void TurboAssembler::CallEphemeronKeyBarrier(Register object, Register address,
+                                             SaveFPRegsMode fp_mode) {
+  EphemeronKeyBarrierDescriptor descriptor;
+  RegList registers = descriptor.allocatable_registers();
+
+  SaveRegisters(registers);
+
+  Register object_parameter(
+      descriptor.GetRegisterParameter(EphemeronKeyBarrierDescriptor::kObject));
+  Register slot_parameter(descriptor.GetRegisterParameter(
+      EphemeronKeyBarrierDescriptor::kSlotAddress));
+  Register fp_mode_parameter(
+      descriptor.GetRegisterParameter(EphemeronKeyBarrierDescriptor::kFPMode));
+
+  Push(object);
+  Push(address);
+
+  Pop(slot_parameter);
+  Pop(object_parameter);
+
+  Move(fp_mode_parameter, Smi::FromEnum(fp_mode));
+  Call(isolate()->builtins()->builtin_handle(Builtins::kEphemeronKeyBarrier),
+       RelocInfo::CODE_TARGET);
+  RestoreRegisters(registers);
 }
 
 void TurboAssembler::CallRecordWriteStub(
@@ -358,15 +363,6 @@ void MacroAssembler::RecordWrite(Register object, Register address,
   }
 
   bind(&done);
-
-  {
-    // Count number of write barriers in generated code.
-    UseScratchRegisterScope temps(this);
-    Register scratch = temps.Acquire();
-    isolate()->counters()->write_barriers_static()->Increment();
-    IncrementCounter(isolate()->counters()->write_barriers_dynamic(), 1,
-                     scratch, value);
-  }
 
   // Clobber clobbered registers when running with the debug-code flag
   // turned on to provoke errors.
@@ -5025,6 +5021,9 @@ void MacroAssembler::IncrementCounter(StatsCounter* counter, int value,
                                       Register scratch1, Register scratch2) {
   DCHECK_GT(value, 0);
   if (FLAG_native_code_counters && counter->Enabled()) {
+    // This operation has to be exactly 32-bit wide in case the external
+    // reference table redirects the counter to a uint32_t dummy_stats_counter_
+    // field.
     li(scratch2, ExternalReference::Create(counter));
     Lw(scratch1, MemOperand(scratch2));
     Addu(scratch1, scratch1, Operand(value));
@@ -5037,6 +5036,9 @@ void MacroAssembler::DecrementCounter(StatsCounter* counter, int value,
                                       Register scratch1, Register scratch2) {
   DCHECK_GT(value, 0);
   if (FLAG_native_code_counters && counter->Enabled()) {
+    // This operation has to be exactly 32-bit wide in case the external
+    // reference table redirects the counter to a uint32_t dummy_stats_counter_
+    // field.
     li(scratch2, ExternalReference::Create(counter));
     Lw(scratch1, MemOperand(scratch2));
     Subu(scratch1, scratch1, Operand(value));
@@ -5168,19 +5170,18 @@ void MacroAssembler::EnterExitFrame(bool save_doubles, int stack_space,
   // [fp + 0 (==kCallerFPOffset)] - saved old fp
   // [fp - 1 StackFrame::EXIT Smi
   // [fp - 2 (==kSPOffset)] - sp of the called function
-  // [fp - 3 (==kCodeOffset)] - CodeObject
   // fp - (2 + stack_space + alignment) == sp == [fp - kSPOffset] - top of the
   //   new stack (will contain saved ra)
 
-  // Save registers and reserve room for saved entry sp and code object.
+  // Save registers and reserve room for saved entry sp.
   daddiu(sp, sp, -2 * kPointerSize - ExitFrameConstants::kFixedFrameSizeFromFp);
-  Sd(ra, MemOperand(sp, 4 * kPointerSize));
-  Sd(fp, MemOperand(sp, 3 * kPointerSize));
+  Sd(ra, MemOperand(sp, 3 * kPointerSize));
+  Sd(fp, MemOperand(sp, 2 * kPointerSize));
   {
     UseScratchRegisterScope temps(this);
     Register scratch = temps.Acquire();
     li(scratch, Operand(StackFrame::TypeToMarker(frame_type)));
-    Sd(scratch, MemOperand(sp, 2 * kPointerSize));
+    Sd(scratch, MemOperand(sp, 1 * kPointerSize));
   }
   // Set up new frame pointer.
   daddiu(fp, sp, ExitFrameConstants::kFixedFrameSizeFromFp);
@@ -5191,10 +5192,6 @@ void MacroAssembler::EnterExitFrame(bool save_doubles, int stack_space,
 
   {
     BlockTrampolinePoolScope block_trampoline_pool(this);
-    // Accessed from ExitFrame::code_slot.
-    li(t8, CodeObject(), CONSTANT_SIZE);
-    Sd(t8, MemOperand(fp, ExitFrameConstants::kCodeOffset));
-
     // Save the frame pointer and the context in top.
     li(t8, ExternalReference::Create(IsolateAddressId::kCEntryFPAddress,
                                      isolate()));

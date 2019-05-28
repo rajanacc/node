@@ -6,7 +6,7 @@
 #define V8_ARM64_CONSTANTS_ARM64_H_
 
 #include "src/base/macros.h"
-#include "src/globals.h"
+#include "src/common/globals.h"
 
 // Assert that this is an LP64 system, or LLP64 on Windows.
 STATIC_ASSERT(sizeof(int) == sizeof(int32_t));
@@ -148,7 +148,7 @@ const unsigned kFloat16ExponentBias = 15;
 // TODO(sigurds): Choose best value.
 constexpr int kRootRegisterBias = 256;
 
-typedef uint16_t float16;
+using float16 = uint16_t;
 
 #define INSTRUCTION_FIELDS_LIST(V_)                     \
   /* Register fields */                                 \

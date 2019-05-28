@@ -15,7 +15,7 @@
 
 #include "src/base/logging.h"
 #include "src/base/macros.h"
-#include "src/globals.h"
+#include "src/common/globals.h"
 
 // UNIMPLEMENTED_ macro for S390.
 #ifdef DEBUG
@@ -147,10 +147,10 @@ inline Condition NegateCondition(Condition cond) {
 // representing instructions from usual 32 bit values.
 // Instruction objects are pointers to 32bit values, and provide methods to
 // access the various ISA fields.
-typedef int32_t Instr;
-typedef uint16_t TwoByteInstr;
-typedef uint32_t FourByteInstr;
-typedef uint64_t SixByteInstr;
+using Instr = int32_t;
+using TwoByteInstr = uint16_t;
+using FourByteInstr = uint32_t;
+using SixByteInstr = uint64_t;
 
 #define S390_RSY_A_OPCODE_LIST(V)                                              \
   V(lmg, LMG, 0xEB04)     /* type = RSY_A LOAD MULTIPLE (64)  */               \
@@ -559,6 +559,8 @@ typedef uint64_t SixByteInstr;
   V(vfce, VFCE, 0xE7E8) /* type = VRR_C VECTOR FP COMPARE EQUAL  */            \
   V(vfche, VFCHE, 0xE7EA) /* type = VRR_C VECTOR FP COMPARE HIGH OR EQUAL  */  \
   V(vfch, VFCH, 0xE7EB)   /* type = VRR_C VECTOR FP COMPARE HIGH  */           \
+  V(vfmax, VFMAX, 0xE7EF) /* type = VRR_C VECTOR FP MAXIMUM */                 \
+  V(vfmin, VFMIN, 0xE7EE) /* type = VRR_C VECTOR FP MINIMUM */                 \
   V(vavgl, VAVGL, 0xE7F0) /* type = VRR_C VECTOR AVERAGE LOGICAL  */           \
   V(vacc, VACC, 0xE7F1)   /* type = VRR_C VECTOR ADD COMPUTE CARRY  */         \
   V(vavg, VAVG, 0xE7F2)   /* type = VRR_C VECTOR AVERAGE  */                   \
@@ -2288,6 +2290,24 @@ class RIEInstruction : Instruction {
 };
 
 // VRR Instruction
+class VRR_A_Instruction : SixByteInstruction {
+ public:
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R1Value, int, 8, 12)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R2Value, int, 12, 16)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(M5Value, uint32_t, 24, 28)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(M4Value, uint32_t, 28, 32)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(M3Value, uint32_t, 32, 36)
+};
+
+class VRR_B_Instruction : SixByteInstruction {
+ public:
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R1Value, int, 8, 12)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R2Value, int, 12, 16)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R3Value, int, 16, 20)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(M5Value, uint32_t, 24, 28)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(M4Value, uint32_t, 32, 36)
+};
+
 class VRR_C_Instruction : SixByteInstruction {
  public:
   DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R1Value, int, 8, 12)
@@ -2295,6 +2315,49 @@ class VRR_C_Instruction : SixByteInstruction {
   DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R3Value, int, 16, 20)
   DECLARE_FIELD_FOR_SIX_BYTE_INSTR(M6Value, uint32_t, 24, 28)
   DECLARE_FIELD_FOR_SIX_BYTE_INSTR(M5Value, uint32_t, 28, 32)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(M4Value, uint32_t, 32, 36)
+};
+
+class VRR_E_Instruction : SixByteInstruction {
+ public:
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R1Value, int, 8, 12)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R2Value, int, 12, 16)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R3Value, int, 16, 20)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R4Value, int, 32, 36)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(M6Value, uint32_t, 20, 24)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(M5Value, uint32_t, 28, 32)
+};
+
+class VRX_Instruction : SixByteInstruction {
+ public:
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R1Value, int, 8, 12)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(X2Value, int, 12, 16)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(B2Value, int, 16, 20)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(D2Value, int, 20, 32)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(M3Value, uint32_t, 32, 36)
+};
+
+class VRS_Instruction : SixByteInstruction {
+ public:
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R1Value, int, 8, 12)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R3Value, int, 12, 16)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(B2Value, int, 16, 20)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(D2Value, int, 20, 32)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(M4Value, uint32_t, 32, 36)
+};
+
+class VRI_A_Instruction : SixByteInstruction {
+ public:
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R1Value, int, 8, 12)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(I2Value, int, 16, 32)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(M3Value, uint32_t, 32, 36)
+};
+
+class VRI_C_Instruction : SixByteInstruction {
+ public:
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R1Value, int, 8, 12)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(R3Value, int, 12, 16)
+  DECLARE_FIELD_FOR_SIX_BYTE_INSTR(I2Value, int, 16, 32)
   DECLARE_FIELD_FOR_SIX_BYTE_INSTR(M4Value, uint32_t, 32, 36)
 };
 

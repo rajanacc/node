@@ -9,9 +9,9 @@
 
 #include "src/base/logging.h"
 #include "src/base/macros.h"
-#include "src/boxed-float.h"
-#include "src/globals.h"
-#include "src/utils.h"
+#include "src/common/globals.h"
+#include "src/utils/boxed-float.h"
+#include "src/utils/utils.h"
 
 // ARM EABI is required.
 #if defined(__arm__) && !defined(__ARM_EABI__)
@@ -114,8 +114,7 @@ inline Condition NegateCondition(Condition cond) {
 // representing instructions from usual 32 bit values.
 // Instruction objects are pointers to 32bit values, and provide methods to
 // access the various ISA fields.
-typedef int32_t Instr;
-
+using Instr = int32_t;
 
 // Opcodes for Data-processing instructions (instructions with a type 0 and 1)
 // as defined in section A3.4
@@ -263,8 +262,7 @@ enum SRegisterField {
 };
 
 // Status register field mask (or'ed SRegisterField enum values).
-typedef uint32_t SRegisterFieldMask;
-
+using SRegisterFieldMask = uint32_t;
 
 // Memory operand addressing mode.
 enum AddrMode {

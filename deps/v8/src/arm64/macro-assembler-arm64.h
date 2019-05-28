@@ -12,9 +12,9 @@
 #include <vector>
 
 #include "src/arm64/assembler-arm64.h"
-#include "src/bailout-reason.h"
 #include "src/base/bits.h"
-#include "src/globals.h"
+#include "src/codegen/bailout-reason.h"
+#include "src/common/globals.h"
 
 // Simulator specific helpers.
 #if USE_SIMULATOR
@@ -158,9 +158,7 @@ enum PreShiftImmMode {
 
 class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
  public:
-  template <typename... Args>
-  explicit TurboAssembler(Args&&... args)
-      : TurboAssemblerBase(std::forward<Args>(args)...) {}
+  using TurboAssemblerBase::TurboAssemblerBase;
 
 #if DEBUG
   void set_allow_macro_instructions(bool value) {
@@ -390,6 +388,7 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   V(fmla, Fmla)                  \
   V(fmls, Fmls)                  \
   V(fmulx, Fmulx)                \
+  V(fnmul, Fnmul)                \
   V(frecps, Frecps)              \
   V(frsqrts, Frsqrts)            \
   V(mla, Mla)                    \
@@ -648,10 +647,10 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   // Load a literal from the inline constant pool.
   inline void Ldr(const CPURegister& rt, const Operand& imm);
 
-  // Claim or drop stack space without actually accessing memory.
+  // Claim or drop stack space.
   //
-  // In debug mode, both of these will write invalid data into the claimed or
-  // dropped space.
+  // On Windows, Claim will write a value every 4k, as is required by the stack
+  // expansion mechanism.
   //
   // The stack pointer must be aligned to 16 bytes and the size claimed or
   // dropped must be a multiple of 16 bytes.
@@ -742,12 +741,23 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   void SaveRegisters(RegList registers);
   void RestoreRegisters(RegList registers);
 
-  void CallRecordWriteStub(Register object, Register address,
+  void CallRecordWriteStub(Register object, Operand offset,
                            RememberedSetAction remembered_set_action,
                            SaveFPRegsMode fp_mode);
-  void CallRecordWriteStub(Register object, Register address,
+  void CallRecordWriteStub(Register object, Operand offset,
                            RememberedSetAction remembered_set_action,
                            SaveFPRegsMode fp_mode, Address wasm_target);
+  void CallEphemeronKeyBarrier(Register object, Operand offset,
+                               SaveFPRegsMode fp_mode);
+
+  // For a given |object| and |offset|:
+  //   - Move |object| to |dst_object|.
+  //   - Compute the address of the slot pointed to by |offset| in |object| and
+  //     write it to |dst_slot|.
+  // This method makes sure |object| and |offset| are allowed to overlap with
+  // the destination registers.
+  void MoveObjectAndSlot(Register dst_object, Register dst_slot,
+                         Register object, Operand offset);
 
   // Alternative forms of Push and Pop, taking a RegList or CPURegList that
   // specifies the registers that are to be pushed or popped. Higher-numbered
@@ -783,11 +793,8 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   Operand MoveImmediateForShiftedOp(const Register& dst, int64_t imm,
                                     PreShiftImmMode mode);
 
-  void CheckPageFlagSet(const Register& object, const Register& scratch,
-                        int mask, Label* if_any_set);
-
-  void CheckPageFlagClear(const Register& object, const Register& scratch,
-                          int mask, Label* if_all_clear);
+  void CheckPageFlag(const Register& object, int mask, Condition cc,
+                     Label* condition_met);
 
   // Test the bits of register defined by bit_pattern, and branch if ANY of
   // those bits are set. May corrupt the status flags.
@@ -1199,10 +1206,15 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
 
   void DecompressTaggedSigned(const Register& destination,
                               const MemOperand& field_operand);
+  void DecompressTaggedSigned(const Register& destination,
+                              const Register& source);
   void DecompressTaggedPointer(const Register& destination,
                                const MemOperand& field_operand);
+  void DecompressTaggedPointer(const Register& destination,
+                               const Register& source);
   void DecompressAnyTagged(const Register& destination,
                            const MemOperand& field_operand);
+  void DecompressAnyTagged(const Register& destination, const Register& source);
 
  protected:
   // The actual Push and Pop implementations. These don't generate any code
@@ -1271,7 +1283,7 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
 
   void JumpHelper(int64_t offset, RelocInfo::Mode rmode, Condition cond = al);
 
-  void CallRecordWriteStub(Register object, Register address,
+  void CallRecordWriteStub(Register object, Operand offset,
                            RememberedSetAction remembered_set_action,
                            SaveFPRegsMode fp_mode, Handle<Code> code_target,
                            Address wasm_target);
@@ -1279,9 +1291,7 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
 
 class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
  public:
-  template <typename... Args>
-  explicit MacroAssembler(Args&&... args)
-      : TurboAssembler(std::forward<Args>(args)...) {}
+  using TurboAssembler::TurboAssembler;
 
   // Instruction set functions ------------------------------------------------
   // Logical macros.
@@ -1573,47 +1583,11 @@ class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
   // Push the specified register 'count' times.
   void PushMultipleTimes(CPURegister src, Register count);
 
-  // Sometimes callers need to push or pop multiple registers in a way that is
-  // difficult to structure efficiently for fixed Push or Pop calls. This scope
-  // allows push requests to be queued up, then flushed at once. The
-  // MacroAssembler will try to generate the most efficient sequence required.
-  //
-  // Unlike the other Push and Pop macros, PushPopQueue can handle mixed sets of
-  // register sizes and types.
-  class PushPopQueue {
-   public:
-    explicit PushPopQueue(MacroAssembler* masm) : masm_(masm), size_(0) {}
-
-    ~PushPopQueue() {
-      DCHECK(queued_.empty());
-    }
-
-    void Queue(const CPURegister& rt) {
-      size_ += rt.SizeInBytes();
-      queued_.push_back(rt);
-    }
-
-    void PushQueued();
-    void PopQueued();
-
-   private:
-    MacroAssembler* masm_;
-    int size_;
-    std::vector<CPURegister> queued_;
-  };
-
   // Peek at two values on the stack, and put them in 'dst1' and 'dst2'. The
   // values peeked will be adjacent, with the value in 'dst2' being from a
   // higher address than 'dst1'. The offset is in bytes. The stack pointer must
   // be aligned to 16 bytes.
   void PeekPair(const CPURegister& dst1, const CPURegister& dst2, int offset);
-
-  // Variants of Claim and Drop, where the 'count' parameter is a SMI held in a
-  // register.
-  inline void ClaimBySMI(const Register& count_smi,
-                         uint64_t unit_size = kXRegSize);
-  inline void DropBySMI(const Register& count_smi,
-                        uint64_t unit_size = kXRegSize);
 
   // Compare a register with an operand, and branch to label depending on the
   // condition. May corrupt the status flags.
@@ -1680,25 +1654,10 @@ class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
   inline void SmiTag(Register smi);
 
   inline void JumpIfNotSmi(Register value, Label* not_smi_label);
-  inline void JumpIfBothSmi(Register value1, Register value2,
-                            Label* both_smi_label,
-                            Label* not_smi_label = nullptr);
-  inline void JumpIfEitherSmi(Register value1, Register value2,
-                              Label* either_smi_label,
-                              Label* not_smi_label = nullptr);
-  inline void JumpIfEitherNotSmi(Register value1,
-                                 Register value2,
-                                 Label* not_smi_label);
-  inline void JumpIfBothNotSmi(Register value1,
-                               Register value2,
-                               Label* not_smi_label);
 
   // Abort execution if argument is a smi, enabled via --debug-code.
   void AssertNotSmi(Register object,
                     AbortReason reason = AbortReason::kOperandIsASmi);
-
-  inline void ObjectTag(Register tagged_obj, Register obj);
-  inline void ObjectUntag(Register untagged_obj, Register obj);
 
   // Abort execution if argument is not a Constructor, enabled via --debug-code.
   void AssertConstructor(Register object);
@@ -1717,20 +1676,6 @@ class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
   // Abort execution if argument is not undefined or an AllocationSite, enabled
   // via --debug-code.
   void AssertUndefinedOrAllocationSite(Register object);
-
-  // Try to represent a double as a signed 64-bit int.
-  // This succeeds if the result compares equal to the input, so inputs of -0.0
-  // are represented as 0 and handled as a success.
-  //
-  // On output the Z flag is set if the operation was successful.
-  void TryRepresentDoubleAsInt64(Register as_int, VRegister value,
-                                 VRegister scratch_d,
-                                 Label* on_successful_conversion = nullptr,
-                                 Label* on_failed_conversion = nullptr) {
-    DCHECK(as_int.Is64Bits());
-    TryRepresentDoubleAsInt(as_int, value, scratch_d, on_successful_conversion,
-                            on_failed_conversion);
-  }
 
   // ---- Calling / Jumping helpers ----
 
@@ -1845,23 +1790,6 @@ class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
   void JumpIfIsInRange(const Register& value, unsigned lower_limit,
                        unsigned higher_limit, Label* on_in_range);
 
-  // Compare the contents of a register with an operand, and branch to true,
-  // false or fall through, depending on condition.
-  void CompareAndSplit(const Register& lhs,
-                       const Operand& rhs,
-                       Condition cond,
-                       Label* if_true,
-                       Label* if_false,
-                       Label* fall_through);
-
-  // Test the bits of register defined by bit_pattern, and branch to
-  // if_any_set, if_all_clear or fall_through accordingly.
-  void TestAndSplit(const Register& reg,
-                    uint64_t bit_pattern,
-                    Label* if_all_clear,
-                    Label* if_any_set,
-                    Label* fall_through);
-
   // ---------------------------------------------------------------------------
   // Frames.
 
@@ -1922,30 +1850,21 @@ class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
   // ---------------------------------------------------------------------------
   // Garbage collector support (GC).
 
-  // Push and pop the registers that can hold pointers, as defined by the
-  // RegList constant kSafepointSavedRegisters.
-  void PushSafepointRegisters();
-  void PopSafepointRegisters();
-
-  void CheckPageFlag(const Register& object, const Register& scratch, int mask,
-                     Condition cc, Label* condition_met);
-
   // Notify the garbage collector that we wrote a pointer into an object.
   // |object| is the object being stored into, |value| is the object being
-  // stored.  value and scratch registers are clobbered by the operation.
+  // stored.
   // The offset is the offset from the start of the object, not the offset from
   // the tagged HeapObject pointer.  For use with FieldMemOperand(reg, off).
   void RecordWriteField(
-      Register object, int offset, Register value, Register scratch,
-      LinkRegisterStatus lr_status, SaveFPRegsMode save_fp,
+      Register object, int offset, Register value, LinkRegisterStatus lr_status,
+      SaveFPRegsMode save_fp,
       RememberedSetAction remembered_set_action = EMIT_REMEMBERED_SET,
       SmiCheck smi_check = INLINE_SMI_CHECK);
 
-  // For a given |object| notify the garbage collector that the slot |address|
-  // has been written.  |value| is the object being stored. The value and
-  // address registers are clobbered by the operation.
+  // For a given |object| notify the garbage collector that the slot at |offset|
+  // has been written. |value| is the object being stored.
   void RecordWrite(
-      Register object, Register address, Register value,
+      Register object, Operand offset, Register value,
       LinkRegisterStatus lr_status, SaveFPRegsMode save_fp,
       RememberedSetAction remembered_set_action = EMIT_REMEMBERED_SET,
       SmiCheck smi_check = INLINE_SMI_CHECK);
@@ -1956,12 +1875,6 @@ class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
   void AssertRegisterIsRoot(
       Register reg, RootIndex index,
       AbortReason reason = AbortReason::kRegisterDidNotMatchExpectedRoot);
-
-  // Abort if the specified register contains the invalid color bit pattern.
-  // The pattern must be in bits [1:0] of 'reg' register.
-  //
-  // If emit_debug_code() is false, this emits no code.
-  void AssertHasValidColor(const Register& reg);
 
   void LoadNativeContextSlot(int index, Register dst);
 
@@ -1995,22 +1908,6 @@ class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
                         const CPURegister& arg2 = NoCPUReg,
                         const CPURegister& arg3 = NoCPUReg);
 
- private:
-  // Try to represent a double as an int so that integer fast-paths may be
-  // used. Not every valid integer value is guaranteed to be caught.
-  // It supports both 32-bit and 64-bit integers depending whether 'as_int'
-  // is a W or X register.
-  //
-  // This does not distinguish between +0 and -0, so if this distinction is
-  // important it must be checked separately.
-  //
-  // On output the Z flag is set if the operation was successful.
-  void TryRepresentDoubleAsInt(Register as_int, VRegister value,
-                               VRegister scratch_d,
-                               Label* on_successful_conversion = nullptr,
-                               Label* on_failed_conversion = nullptr);
-
- public:
   // Far branches resolving.
   //
   // The various classes of branch instructions with immediate offsets have
@@ -2083,7 +1980,7 @@ class InstructionAccurateScope {
 // original state, even if the lists were modified by some other means. Note
 // that this scope can be nested but the destructors need to run in the opposite
 // order as the constructors. We do not have assertions for this.
-class UseScratchRegisterScope {
+class V8_EXPORT_PRIVATE UseScratchRegisterScope {
  public:
   explicit UseScratchRegisterScope(TurboAssembler* tasm)
       : available_(tasm->TmpList()),
@@ -2111,7 +2008,8 @@ class UseScratchRegisterScope {
   VRegister AcquireSameSizeAs(const VRegister& reg);
 
  private:
-  static CPURegister AcquireNextAvailable(CPURegList* available);
+  static CPURegister AcquireNextAvailable(
+      CPURegList* available);
 
   // Available scratch registers.
   CPURegList* available_;     // kRegister
@@ -2124,55 +2022,6 @@ class UseScratchRegisterScope {
 
 MemOperand ContextMemOperand(Register context, int index = 0);
 MemOperand NativeContextMemOperand();
-
-// Encode and decode information about patchable inline SMI checks.
-class InlineSmiCheckInfo {
- public:
-  explicit InlineSmiCheckInfo(Address info);
-
-  bool HasSmiCheck() const { return smi_check_ != nullptr; }
-
-  const Register& SmiRegister() const {
-    return reg_;
-  }
-
-  Instruction* SmiCheck() const {
-    return smi_check_;
-  }
-
-  int SmiCheckDelta() const { return smi_check_delta_; }
-
-  // Use MacroAssembler::InlineData to emit information about patchable inline
-  // SMI checks. The caller may specify 'reg' as NoReg and an unbound 'site' to
-  // indicate that there is no inline SMI check. Note that 'reg' cannot be sp.
-  //
-  // The generated patch information can be read using the InlineSMICheckInfo
-  // class.
-  static void Emit(MacroAssembler* masm, const Register& reg,
-                   const Label* smi_check);
-
-  // Emit information to indicate that there is no inline SMI check.
-  static void EmitNotInlined(MacroAssembler* masm) {
-    Label unbound;
-    Emit(masm, NoReg, &unbound);
-  }
-
- private:
-  Register reg_;
-  int smi_check_delta_;
-  Instruction* smi_check_;
-
-  // Fields in the data encoded by InlineData.
-
-  // A width of 5 (Rd_width) for the SMI register precludes the use of sp,
-  // since kSPRegInternalCode is 63. However, sp should never hold a SMI or be
-  // used in a patchable check. The Emit() method checks this.
-  //
-  // Note that the total size of the fields is restricted by the underlying
-  // storage size handled by the BitField class, which is a uint32_t.
-  class RegisterBits : public BitField<unsigned, 0, 5> {};
-  class DeltaBits : public BitField<uint32_t, 5, 32-5> {};
-};
 
 }  // namespace internal
 }  // namespace v8

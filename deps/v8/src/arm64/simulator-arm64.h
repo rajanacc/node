@@ -6,22 +6,22 @@
 #define V8_ARM64_SIMULATOR_ARM64_H_
 
 // globals.h defines USE_SIMULATOR.
-#include "src/globals.h"
+#include "src/common/globals.h"
 
 #if defined(USE_SIMULATOR)
 
 #include <stdarg.h>
 #include <vector>
 
-#include "src/allocation.h"
 #include "src/arm64/assembler-arm64.h"
 #include "src/arm64/decoder-arm64.h"
 #include "src/arm64/disasm-arm64.h"
 #include "src/arm64/instrument-arm64.h"
-#include "src/assembler.h"
 #include "src/base/compiler-specific.h"
-#include "src/simulator-base.h"
-#include "src/utils.h"
+#include "src/codegen/assembler.h"
+#include "src/execution/simulator-base.h"
+#include "src/utils/allocation.h"
+#include "src/utils/utils.h"
 
 namespace v8 {
 namespace internal {
@@ -372,8 +372,8 @@ class SimRegisterBase {
   void NotifyRegisterWrite() { written_since_last_log_ = true; }
 };
 
-typedef SimRegisterBase<kXRegSize> SimRegister;   // r0-r31
-typedef SimRegisterBase<kQRegSize> SimVRegister;  // v0-v31
+using SimRegister = SimRegisterBase<kXRegSize>;   // r0-r31
+using SimVRegister = SimRegisterBase<kQRegSize>;  // v0-v31
 
 // Representation of a vector register, with typed getters and setters for lanes
 // and additional information to represent lane state.
@@ -656,10 +656,11 @@ class Simulator : public DecoderVisitor, public SimulatorBase {
     USE(size);
   }
 
-  explicit Simulator(Decoder<DispatchingDecoderVisitor>* decoder,
-                     Isolate* isolate = nullptr, FILE* stream = stderr);
+  V8_EXPORT_PRIVATE explicit Simulator(
+      Decoder<DispatchingDecoderVisitor>* decoder, Isolate* isolate = nullptr,
+      FILE* stream = stderr);
   Simulator();
-  ~Simulator();
+  V8_EXPORT_PRIVATE ~Simulator();
 
   // System functions.
 
@@ -744,7 +745,7 @@ class Simulator : public DecoderVisitor, public SimulatorBase {
   // Accessor to the internal simulator stack area.
   uintptr_t StackLimit(uintptr_t c_limit) const;
 
-  void ResetState();
+  V8_EXPORT_PRIVATE void ResetState();
 
   void DoRuntimeCall(Instruction* instr);
 
@@ -752,7 +753,7 @@ class Simulator : public DecoderVisitor, public SimulatorBase {
   static const Instruction* kEndOfSimAddress;
   void DecodeInstruction();
   void Run();
-  void RunFrom(Instruction* start);
+  V8_EXPORT_PRIVATE void RunFrom(Instruction* start);
 
   // Simulation helpers.
   template <typename T>

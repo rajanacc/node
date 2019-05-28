@@ -12,14 +12,15 @@
 #include <stdlib.h>
 #include <cmath>
 
-#include "src/assembler-inl.h"
 #include "src/base/bits.h"
-#include "src/disasm.h"
-#include "src/macro-assembler.h"
+#include "src/codegen/assembler-inl.h"
+#include "src/codegen/macro-assembler.h"
+#include "src/diagnostics/disasm.h"
+#include "src/heap/combined-heap.h"
 #include "src/mips64/constants-mips64.h"
-#include "src/ostreams.h"
 #include "src/runtime/runtime-utils.h"
-#include "src/vector.h"
+#include "src/utils/ostreams.h"
+#include "src/utils/vector.h"
 
 namespace v8 {
 namespace internal {
@@ -330,7 +331,7 @@ void MipsDebugger::Debug() {
       v8::internal::EmbeddedVector<char, 256> buffer;
       dasm.InstructionDecode(buffer,
                              reinterpret_cast<byte*>(sim_->get_pc()));
-      PrintF("  0x%016" PRIx64 "   %s\n", sim_->get_pc(), buffer.start());
+      PrintF("  0x%016" PRIx64 "   %s\n", sim_->get_pc(), buffer.begin());
       last_pc = sim_->get_pc();
     }
     char* line = ReadLine("sim> ");
@@ -423,7 +424,7 @@ void MipsDebugger::Debug() {
             Object obj(value);
             os << arg1 << ": \n";
 #ifdef DEBUG
-            obj->Print(os);
+            obj.Print(os);
             os << "\n";
 #else
             os << Brief(obj) << "\n";
@@ -466,12 +467,13 @@ void MipsDebugger::Debug() {
                  reinterpret_cast<intptr_t>(cur), *cur, *cur);
           Object obj(*cur);
           Heap* current_heap = sim_->isolate_->heap();
-          if (obj.IsSmi() || current_heap->Contains(HeapObject::cast(obj))) {
+          if (obj.IsSmi() ||
+              IsValidHeapObject(current_heap, HeapObject::cast(obj))) {
             PrintF(" (");
             if (obj.IsSmi()) {
               PrintF("smi %d", Smi::ToInt(obj));
             } else {
-              obj->ShortPrint();
+              obj.ShortPrint();
             }
             PrintF(")");
           }
@@ -524,7 +526,7 @@ void MipsDebugger::Debug() {
         while (cur < end) {
           dasm.InstructionDecode(buffer, cur);
           PrintF("  0x%08" PRIxPTR "   %s\n", reinterpret_cast<intptr_t>(cur),
-                 buffer.start());
+                 buffer.begin());
           cur += kInstrSize;
         }
       } else if (strcmp(cmd, "gdb") == 0) {
@@ -644,7 +646,7 @@ void MipsDebugger::Debug() {
         while (cur < end) {
           dasm.InstructionDecode(buffer, cur);
           PrintF("  0x%08" PRIxPTR "   %s\n", reinterpret_cast<intptr_t>(cur),
-                 buffer.start());
+                 buffer.begin());
           cur += kInstrSize;
         }
       } else if ((strcmp(cmd, "h") == 0) || (strcmp(cmd, "help") == 0)) {
@@ -3636,7 +3638,6 @@ void Simulator::DecodeTypeRegisterCOP1() {
     case BC1EQZ:
     case BC1NEZ:
       UNREACHABLE();
-      break;
     case CFC1:
       // At the moment only FCSR is supported.
       DCHECK_EQ(fs_reg(), kFCSRRegister);
@@ -5008,7 +5009,7 @@ void Simulator::DecodeTypeMsaELM() {
 
 template <typename T>
 T Simulator::MsaBitInstrHelper(uint32_t opcode, T wd, T ws, int32_t m) {
-  typedef typename std::make_unsigned<T>::type uT;
+  using uT = typename std::make_unsigned<T>::type;
   T res;
   switch (opcode) {
     case SLLI:
@@ -5201,7 +5202,7 @@ void Simulator::DecodeTypeMsaMI10() {
 
 template <typename T>
 T Simulator::Msa3RInstrHelper(uint32_t opcode, T wd, T ws, T wt) {
-  typedef typename std::make_unsigned<T>::type uT;
+  using uT = typename std::make_unsigned<T>::type;
   T res;
   int wt_modulo = wt % (sizeof(T) * 8);
   switch (opcode) {
@@ -5481,8 +5482,8 @@ template <typename T_int, typename T_smaller_int, typename T_reg>
 void Msa3RInstrHelper_horizontal(const uint32_t opcode, T_reg ws, T_reg wt,
                                  T_reg wd, const int i,
                                  const int num_of_lanes) {
-  typedef typename std::make_unsigned<T_int>::type T_uint;
-  typedef typename std::make_unsigned<T_smaller_int>::type T_smaller_uint;
+  using T_uint = typename std::make_unsigned<T_int>::type;
+  using T_smaller_uint = typename std::make_unsigned<T_smaller_int>::type;
   T_int* wd_p;
   T_smaller_int *ws_p, *wt_p;
   ws_p = reinterpret_cast<T_smaller_int*>(ws);
@@ -5775,8 +5776,8 @@ void Msa3RFInstrHelper(uint32_t opcode, T_reg ws, T_reg wt, T_reg& wd) {
 
 template <typename T_int, typename T_int_dbl, typename T_reg>
 void Msa3RFInstrHelper2(uint32_t opcode, T_reg ws, T_reg wt, T_reg& wd) {
-  // typedef typename std::make_unsigned<T_int>::type T_uint;
-  typedef typename std::make_unsigned<T_int_dbl>::type T_uint_dbl;
+  //  using T_uint = typename std::make_unsigned<T_int>::type;
+  using T_uint_dbl = typename std::make_unsigned<T_int_dbl>::type;
   const T_int max_int = std::numeric_limits<T_int>::max();
   const T_int min_int = std::numeric_limits<T_int>::min();
   const int shift = kBitsPerByte * sizeof(T_int) - 1;
@@ -6228,7 +6229,7 @@ static inline bool isSnan(double fp) { return !QUIET_BIT_D(fp); }
 template <typename T_int, typename T_fp, typename T_src, typename T_dst>
 T_int Msa2RFInstrHelper(uint32_t opcode, T_src src, T_dst& dst,
                         Simulator* sim) {
-  typedef typename std::make_unsigned<T_int>::type T_uint;
+  using T_uint = typename std::make_unsigned<T_int>::type;
   switch (opcode) {
     case FCLASS: {
 #define SNAN_BIT BIT(0)
@@ -6413,7 +6414,7 @@ T_int Msa2RFInstrHelper(uint32_t opcode, T_src src, T_dst& dst,
       dst = bit_cast<T_int>(static_cast<T_fp>(src));
       break;
     case FFINT_U:
-      typedef typename std::make_unsigned<T_src>::type uT_src;
+      using uT_src = typename std::make_unsigned<T_src>::type;
       dst = bit_cast<T_int>(static_cast<T_fp>(bit_cast<uT_src>(src)));
       break;
     default:
@@ -7389,8 +7390,8 @@ void Simulator::InstructionDecode(Instruction* instr) {
 
   if (::v8::internal::FLAG_trace_sim) {
     PrintF("  0x%08" PRIxPTR "   %-44s   %s\n",
-           reinterpret_cast<intptr_t>(instr), buffer.start(),
-           trace_buf_.start());
+           reinterpret_cast<intptr_t>(instr), buffer.begin(),
+           trace_buf_.begin());
   }
 
   if (!pc_modified_) {

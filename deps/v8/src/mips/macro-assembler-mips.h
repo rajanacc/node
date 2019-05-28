@@ -9,10 +9,10 @@
 #ifndef V8_MIPS_MACRO_ASSEMBLER_MIPS_H_
 #define V8_MIPS_MACRO_ASSEMBLER_MIPS_H_
 
-#include "src/assembler.h"
-#include "src/contexts.h"
-#include "src/globals.h"
+#include "src/codegen/assembler.h"
+#include "src/common/globals.h"
 #include "src/mips/assembler-mips.h"
+#include "src/objects/contexts.h"
 
 namespace v8 {
 namespace internal {
@@ -91,9 +91,7 @@ inline MemOperand CFunctionArgumentOperand(int index) {
 
 class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
  public:
-  template <typename... Args>
-  explicit TurboAssembler(Args&&... args)
-      : TurboAssemblerBase(std::forward<Args>(args)...) {}
+  using TurboAssemblerBase::TurboAssemblerBase;
 
   // Activation support.
   void EnterFrame(StackFrame::Type type);
@@ -331,6 +329,8 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   void CallRecordWriteStub(Register object, Register address,
                            RememberedSetAction remembered_set_action,
                            SaveFPRegsMode fp_mode, Address wasm_target);
+  void CallEphemeronKeyBarrier(Register object, Register address,
+                               SaveFPRegsMode fp_mode);
 
   // Push multiple registers on the stack.
   // Registers are saved in numerical order, with higher numbered registers
@@ -549,6 +549,10 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   // Int64Lowering instructions
   void AddPair(Register dst_low, Register dst_high, Register left_low,
                Register left_high, Register right_low, Register right_high,
+               Register scratch1, Register scratch2);
+
+  void AddPair(Register dst_low, Register dst_high, Register left_low,
+               Register left_high, int32_t imm,
                Register scratch1, Register scratch2);
 
   void SubPair(Register dst_low, Register dst_high, Register left_low,
@@ -900,9 +904,7 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
 // MacroAssembler implements a collection of frequently used macros.
 class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
  public:
-  template <typename... Args>
-  explicit MacroAssembler(Args&&... args)
-      : TurboAssembler(std::forward<Args>(args)...) {}
+  using TurboAssembler::TurboAssembler;
 
   // Swap two registers.  If the scratch register is omitted then a slightly
   // less efficient form using xor instead of mov is emitted.
@@ -960,11 +962,6 @@ class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
       SmiCheck smi_check = INLINE_SMI_CHECK);
 
   void Pref(int32_t hint, const MemOperand& rs);
-
-  // Push and pop the registers that can hold pointers, as defined by the
-  // RegList constant kSafepointSavedRegisters.
-  void PushSafepointRegisters();
-  void PopSafepointRegisters();
 
   // Truncates a double using a specific rounding mode, and writes the value
   // to the result register.
@@ -1096,18 +1093,11 @@ class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
     And(scratch, value, Operand(kSmiTagMask));
   }
 
-  // Untag the source value into destination and jump if source is a smi.
-  // Souce and destination can be the same register.
-  void UntagAndJumpIfSmi(Register dst, Register src, Label* smi_case);
-
   // Jump if the register contains a non-smi.
   void JumpIfNotSmi(Register value,
                     Label* not_smi_label,
                     Register scratch = at,
                     BranchDelaySlot bd = PROTECT);
-
-  // Jump if either of the registers contain a smi.
-  void JumpIfEitherSmi(Register reg1, Register reg2, Label* on_either_smi);
 
   // Abort execution if argument is a smi, enabled via --debug-code.
   void AssertNotSmi(Register object);

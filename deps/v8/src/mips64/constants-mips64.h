@@ -7,7 +7,7 @@
 
 #include "src/base/logging.h"
 #include "src/base/macros.h"
-#include "src/globals.h"
+#include "src/common/globals.h"
 
 // UNIMPLEMENTED_ macro for MIPS.
 #ifdef DEBUG
@@ -253,7 +253,7 @@ class MSARegisters {
 // Instructions encoding constants.
 
 // On MIPS all instructions are 32 bits.
-typedef int32_t Instr;
+using Instr = int32_t;
 
 // Special Software Interrupt codes when used in the presence of the MIPS
 // simulator.

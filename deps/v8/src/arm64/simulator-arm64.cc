@@ -12,13 +12,14 @@
 #include <type_traits>
 
 #include "src/arm64/decoder-arm64-inl.h"
-#include "src/assembler-inl.h"
 #include "src/base/lazy-instance.h"
-#include "src/disasm.h"
-#include "src/macro-assembler.h"
-#include "src/objects-inl.h"
-#include "src/ostreams.h"
+#include "src/codegen/assembler-inl.h"
+#include "src/codegen/macro-assembler.h"
+#include "src/diagnostics/disasm.h"
+#include "src/heap/combined-heap.h"
+#include "src/objects/objects-inl.h"
 #include "src/runtime/runtime-utils.h"
+#include "src/utils/ostreams.h"
 
 namespace v8 {
 namespace internal {
@@ -44,7 +45,7 @@ namespace internal {
 #define CYAN    "36"
 #define WHITE   "37"
 
-typedef char const * const TEXT_COLOUR;
+using TEXT_COLOUR = char const* const;
 TEXT_COLOUR clr_normal         = FLAG_log_colour ? COLOUR(NORMAL)       : "";
 TEXT_COLOUR clr_flag_name      = FLAG_log_colour ? COLOUR_BOLD(WHITE)   : "";
 TEXT_COLOUR clr_flag_value     = FLAG_log_colour ? COLOUR(NORMAL)       : "";
@@ -467,7 +468,6 @@ void Simulator::DoRuntimeCall(Instruction* instr) {
     default:
       TraceSim("Type: Unknown.\n");
       UNREACHABLE();
-      break;
 
     case ExternalReference::BUILTIN_CALL:
 #if defined(V8_OS_WIN)
@@ -772,7 +772,6 @@ void LogicVRegister::ReadUintFromMem(VectorFormat vform, int index,
       break;
     default:
       UNREACHABLE();
-      return;
   }
 }
 
@@ -795,7 +794,6 @@ void LogicVRegister::WriteUintToMem(VectorFormat vform, int index,
       break;
     default:
       UNREACHABLE();
-      return;
   }
 }
 
@@ -876,7 +874,7 @@ void Simulator::AddSubWithCarry(Instruction* instr) {
 
 template <typename T>
 T Simulator::ShiftOperand(T value, Shift shift_type, unsigned amount) {
-  typedef typename std::make_unsigned<T>::type unsignedT;
+  using unsignedT = typename std::make_unsigned<T>::type;
 
   if (amount == 0) {
     return value;
@@ -1487,7 +1485,6 @@ void Simulator::VisitPCRelAddressing(Instruction* instr) {
       break;
     default:
       UNREACHABLE();
-      break;
   }
 }
 
@@ -2391,7 +2388,7 @@ void Simulator::DataProcessing2Source(Instruction* instr) {
     }
     case UDIV_w:
     case UDIV_x: {
-      typedef typename std::make_unsigned<T>::type unsignedT;
+      using unsignedT = typename std::make_unsigned<T>::type;
       unsignedT rn = static_cast<unsignedT>(reg<T>(instr->Rn()));
       unsignedT rm = static_cast<unsignedT>(reg<T>(instr->Rm()));
       if (rm == 0) {
@@ -2496,7 +2493,7 @@ void Simulator::VisitDataProcessing3Source(Instruction* instr) {
 
 template <typename T>
 void Simulator::BitfieldHelper(Instruction* instr) {
-  typedef typename std::make_unsigned<T>::type unsignedT;
+  using unsignedT = typename std::make_unsigned<T>::type;
   T reg_size = sizeof(T) * 8;
   T R = instr->ImmR();
   T S = instr->ImmS();
@@ -3241,7 +3238,7 @@ void Simulator::Debug() {
             Object obj(value);
             os << arg1 << ": \n";
 #ifdef DEBUG
-            obj->Print(os);
+            obj.Print(os);
             os << "\n";
 #else
             os << Brief(obj) << "\n";
@@ -3293,12 +3290,13 @@ void Simulator::Debug() {
                  reinterpret_cast<uint64_t>(cur), *cur, *cur);
           Object obj(*cur);
           Heap* current_heap = isolate_->heap();
-          if (obj.IsSmi() || current_heap->Contains(HeapObject::cast(obj))) {
+          if (obj.IsSmi() ||
+              IsValidHeapObject(current_heap, HeapObject::cast(obj))) {
             PrintF(" (");
             if (obj.IsSmi()) {
               PrintF("smi %" PRId32, Smi::ToInt(obj));
             } else {
-              obj->ShortPrint();
+              obj.ShortPrint();
             }
             PrintF(")");
           }

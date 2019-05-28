@@ -8,14 +8,13 @@
 #include "src/arm64/assembler-arm64.h"
 #include "src/arm64/decoder-arm64.h"
 #include "src/arm64/instructions-arm64.h"
-#include "src/globals.h"
-#include "src/utils.h"
+#include "src/common/globals.h"
+#include "src/utils/utils.h"
 
 namespace v8 {
 namespace internal {
 
-
-class DisassemblingDecoder : public DecoderVisitor {
+class V8_EXPORT_PRIVATE DisassemblingDecoder : public DecoderVisitor {
  public:
   DisassemblingDecoder();
   DisassemblingDecoder(char* text_buffer, int buffer_size);
@@ -80,8 +79,7 @@ class DisassemblingDecoder : public DecoderVisitor {
   bool own_buffer_;
 };
 
-
-class PrintDisassembler : public DisassemblingDecoder {
+class V8_EXPORT_PRIVATE PrintDisassembler : public DisassemblingDecoder {
  public:
   explicit PrintDisassembler(FILE* stream) : stream_(stream) { }
   ~PrintDisassembler() { }
@@ -91,7 +89,6 @@ class PrintDisassembler : public DisassemblingDecoder {
  private:
   FILE *stream_;
 };
-
 
 }  // namespace internal
 }  // namespace v8
